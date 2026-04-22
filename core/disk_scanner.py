@@ -11,7 +11,7 @@ from utils.platform import is_windows, is_linux, is_wsl
 
 def get_disk_partitions() -> List[DiskInfo]:
     partitions = []
-    for part in psutil.disk_partitions(all=False):
+    for part in psutil.disk_partitions(all=True):
         if is_windows():
             if _is_valid_windows_partition(part):
                 usage = _get_disk_usage(part.mountpoint)

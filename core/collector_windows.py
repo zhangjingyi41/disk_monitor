@@ -9,13 +9,14 @@ from core.collector_base import CollectorBase
 
 
 class WindowsCollector(CollectorBase):
-    def __init__(self):
+    def __init__(self, use_approx: bool = False):
         super().__init__()
         self._last_io_counters: Dict[int, dict] = {}
         self._last_disk_counters: Dict[str, dict] = {}
         self._last_check_time = time.time()
         self._process_name_cache: Dict[int, str] = {}
-        self._use_process_io = True
+        self._use_process_io = not use_approx  # Use process IO unless in approx mode
+        self._use_approx = use_approx
 
     def _start_native(self) -> bool:
         # Current implementation relies on base polling loop.
@@ -28,7 +29,10 @@ class WindowsCollector(CollectorBase):
         events = []
         current_time = time.time()
 
-        events.extend(self._collect_process_io(current_time))
+        if self._use_process_io:
+            events.extend(self._collect_process_io(current_time))
+        else:
+            events.extend(self._collect_disk_io(current_time))
 
         self._last_check_time = current_time
         return events
@@ -80,9 +84,49 @@ class WindowsCollector(CollectorBase):
             pass
         return events
 
+    def _collect_disk_io(self, current_time: float) -> List[IOEvent]:
+        events = []
+        try:
+            counters = psutil.disk_io_counters(perdisk=True)
+            if counters:
+                for disk_name, counter in counters.items():
+                    last_counter = self._last_disk_counters.get(disk_name)
+
+                    if last_counter:
+                        read_bytes = counter.read_bytes - last_counter['read_bytes']
+                        write_bytes = counter.write_bytes - last_counter['write_bytes']
+
+                        if read_bytes > 0:
+                            events.append(IOEvent(
+                                timestamp=current_time,
+                                pid=0,
+                                operation=OperationType.READ,
+                                bytes=read_bytes,
+                                disk=disk_name
+                            ))
+
+                        if write_bytes > 0:
+                            events.append(IOEvent(
+                                timestamp=current_time,
+                                pid=0,
+                                operation=OperationType.WRITE,
+                                bytes=write_bytes,
+                                disk=disk_name
+                            ))
+
+                    self._last_disk_counters[disk_name] = {
+                        'read_bytes': counter.read_bytes,
+                        'write_bytes': counter.write_bytes
+                    }
+        except Exception:
+            pass
+        return events
+
     def get_process_name(self, pid: int) -> str:
+        if pid == 0:
+            return 'SYSTEM'
         return self._process_name_cache.get(pid, f'PID:{pid}')
 
 
 def create_windows_collector(use_approx: bool = False) -> WindowsCollector:
-    return WindowsCollector()
+    return WindowsCollector(use_approx=use_approx)

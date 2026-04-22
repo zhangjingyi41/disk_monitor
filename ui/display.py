@@ -39,7 +39,8 @@ class CLIDisplayCallback(OutputCallback):
         print("=" * 50)
 
     def _clear_screen(self) -> None:
-        os.system('cls' if self._is_windows else 'clear')
+        # os.system('cls' if self._is_windows else 'clear')
+        print()
 
     def _print_header(self, interval_ms: int) -> None:
         current_time = time.strftime("%Y-%m-%d %H:%M:%S")

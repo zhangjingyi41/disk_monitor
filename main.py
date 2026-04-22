@@ -74,6 +74,12 @@ def main():
     config = parse_args()
 
     print_disk_info()
+    
+    from utils.platform import is_windows
+    if is_windows() and not config.approx_mode:
+        print("提示: 当前显示进程级别的磁盘活动(磁盘显示为SYSTEM)")
+        print("      要查看各磁盘分区的活动(如C:, D:, E:)，请使用 --approx-mode 参数")
+        print()
 
     from ui.display import CLIDisplayCallback
     callback = CLIDisplayCallback()

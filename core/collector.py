@@ -16,4 +16,18 @@ def create_collector(use_approx: bool = False) -> CollectorBase:
 
 
 def is_approx_mode_required() -> bool:
+    from utils.platform import is_wsl
+    # In WSL, psutil cannot get disk IO counters, so approximate mode is required
+    if is_wsl():
+        return True
+    
+    # Check if psutil can get disk IO counters
+    try:
+        import psutil
+        io = psutil.disk_io_counters()
+        if io is None:
+            return True
+    except Exception:
+        return True
+    
     return False

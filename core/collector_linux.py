@@ -15,6 +15,8 @@ class LinuxCollector(CollectorBase):
         self._last_check_time = time.time()
         self._process_name_cache: Dict[int, str] = {}
         self._use_disk_io = True
+        self._use_approx = False
+        self._use_proc_stat = False
 
     def _start_native(self) -> bool:
         self._check_io_availability()
@@ -40,12 +42,27 @@ class LinuxCollector(CollectorBase):
                 self._use_disk_io = True
             except Exception:
                 self._use_disk_io = False
+        
+        # If we can't use disk IO and we're in approx mode, try proc stat
+        if not self._use_disk_io and self._use_approx:
+            try:
+                with open('/proc/self/stat', 'r') as f:
+                    content = f.read()
+                    fields = content.split()
+                    if len(fields) >= 43:
+                        rchar = int(fields[41])
+                        wchar = int(fields[42])
+                        self._use_proc_stat = True
+            except Exception:
+                self._use_proc_stat = False
 
     def _collect_events(self) -> List[IOEvent]:
         events = []
         current_time = time.time()
 
-        if self._use_disk_io:
+        if self._use_proc_stat:
+            events.extend(self._collect_proc_stat_io(current_time))
+        elif self._use_disk_io:
             events.extend(self._collect_process_io(current_time))
         else:
             events.extend(self._collect_disk_io(current_time))
@@ -138,9 +155,80 @@ class LinuxCollector(CollectorBase):
             pass
         return events
 
+    def _collect_proc_stat_io(self, current_time: float) -> List[IOEvent]:
+        events = []
+        try:
+            import os
+            import glob
+            
+            # Iterate through all /proc/[pid]/stat files
+            for stat_path in glob.glob('/proc/[0-9]*/stat'):
+                try:
+                    pid = int(os.path.basename(os.path.dirname(stat_path)))
+                    with open(stat_path, 'r') as f:
+                        content = f.read()
+                    fields = content.split()
+                    if len(fields) < 43:
+                        continue
+                    
+                    rchar = int(fields[41])
+                    wchar = int(fields[42])
+                    
+                    # Get process name from stat file (field 2, enclosed in parentheses)
+                    # Process name might contain spaces, so we need to parse carefully
+                    # The stat format: pid (comm) state ... fields
+                    # Find the last closing parenthesis
+                    end_comm = content.rfind(')')
+                    if end_comm == -1:
+                        continue
+                    
+                    # Get process name (without parentheses)
+                    comm = content[content.find('(')+1:end_comm]
+                    self._process_name_cache[pid] = comm
+                    
+                    # Get last counters
+                    last_counter = self._last_io_counters.get(pid)
+                    if last_counter:
+                        read_bytes = rchar - last_counter['read_bytes']
+                        write_bytes = wchar - last_counter['write_bytes']
+                        
+                        if read_bytes > 0:
+                            events.append(IOEvent(
+                                timestamp=current_time,
+                                pid=pid,
+                                operation=OperationType.READ,
+                                bytes=read_bytes,
+                                disk='SYSTEM'  # Can't determine disk in proc stat
+                            ))
+                        
+                        if write_bytes > 0:
+                            events.append(IOEvent(
+                                timestamp=current_time,
+                                pid=pid,
+                                operation=OperationType.WRITE,
+                                bytes=write_bytes,
+                                disk='SYSTEM'  # Can't determine disk in proc stat
+                            ))
+                    
+                    # Update last counters
+                    self._last_io_counters[pid] = {
+                        'read_bytes': rchar,
+                        'write_bytes': wchar
+                    }
+                    
+                except (FileNotFoundError, PermissionError, ValueError, IndexError):
+                    continue
+        except Exception:
+            pass
+        return events
+
     def get_process_name(self, pid: int) -> str:
+        if pid == 0:
+            return 'SYSTEM'
         return self._process_name_cache.get(pid, f'PID:{pid}')
 
 
 def create_linux_collector(use_approx: bool = False) -> LinuxCollector:
-    return LinuxCollector()
+    collector = LinuxCollector()
+    collector._use_approx = use_approx
+    return collector

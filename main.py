@@ -5,6 +5,8 @@ import sys
 import time
 from typing import Optional
 
+import psutil
+
 from core.collector import create_collector, is_approx_mode_required
 from core.aggregator import Aggregator
 from core.process_cache import ProcessCache
@@ -12,6 +14,7 @@ from core.models import IOEvent, DiskActivity
 from core.disk_scanner import get_disk_partitions
 from ui.callback import OutputCallback
 from utils.config import parse_args, Config
+from utils.platform import is_windows
 
 
 class DiskMonitor:
@@ -76,9 +79,14 @@ def main():
     print_disk_info()
     
     from utils.platform import is_windows
-    if is_windows() and not config.approx_mode:
-        print("提示: 当前显示进程级别的磁盘活动(磁盘显示为SYSTEM)")
-        print("      要查看各磁盘分区的活动(如C:, D:, E:)，请使用 --approx-mode 参数")
+    if is_windows():
+        if config.approx_mode:
+            print("提示: 近似模式下显示物理磁盘活动(如Disk 0, Disk 1)")
+            print("      一个物理磁盘可能包含多个逻辑分区(如C:, D:, E:)")
+            print("      要查看进程级别的活动，请不使用 --approx-mode 参数")
+        else:
+            print("提示: 当前显示进程级别的磁盘活动(磁盘显示为SYSTEM)")
+            print("      要查看物理磁盘的活动，请使用 --approx-mode 参数")
         print()
 
     from ui.display import CLIDisplayCallback
@@ -98,6 +106,19 @@ def print_disk_info():
     if not partitions:
         print("  未检测到磁盘分区")
     print("=" * 50)
+    
+    # Show physical disk information on Windows
+    if is_windows():
+        try:
+            disk_counters = psutil.disk_io_counters(perdisk=True)
+            if disk_counters:
+                print("\n检测到的物理磁盘:")
+                for disk_name in sorted(disk_counters.keys()):
+                    print(f"  {disk_name}")
+                print("提示: 近似模式下显示的是物理磁盘活动，无法区分C:/D:/E:等逻辑分区")
+                print("=" * 50)
+        except Exception:
+            pass
     print()
 
 

@@ -2,6 +2,7 @@
 
 import time
 import psutil
+import re
 from typing import List, Dict
 
 from core.models import IOEvent, OperationType
@@ -24,6 +25,23 @@ class WindowsCollector(CollectorBase):
 
     def _stop_native(self) -> None:
         pass
+    
+    def _format_disk_name(self, disk_name: str) -> str:
+        """Format physical disk name to be more user-friendly.
+        
+        Converts 'PhysicalDrive0' to 'Disk 0', 'PhysicalDrive1' to 'Disk 1', etc.
+        Also handles other disk naming conventions.
+        """
+        # Handle PhysicalDriveX pattern
+        match = re.match(r'PhysicalDrive(\d+)', disk_name, re.IGNORECASE)
+        if match:
+            return f"Disk {match.group(1)}"
+        
+        # Handle other patterns like C:, D:, etc.
+        if re.match(r'^[A-Za-z]:$', disk_name):
+            return disk_name
+        
+        return disk_name
 
     def _collect_events(self) -> List[IOEvent]:
         events = []
@@ -102,7 +120,7 @@ class WindowsCollector(CollectorBase):
                                 pid=0,
                                 operation=OperationType.READ,
                                 bytes=read_bytes,
-                                disk=disk_name
+                                disk=self._format_disk_name(disk_name)
                             ))
 
                         if write_bytes > 0:
@@ -111,7 +129,7 @@ class WindowsCollector(CollectorBase):
                                 pid=0,
                                 operation=OperationType.WRITE,
                                 bytes=write_bytes,
-                                disk=disk_name
+                                disk=self._format_disk_name(disk_name)
                             ))
 
                     self._last_disk_counters[disk_name] = {

@@ -11,6 +11,10 @@ class ProcessCache:
         self._ttl = ttl_seconds
 
     def get_process_name(self, pid: int) -> str:
+        # Special handling for pid 0 (system/kernel)
+        if pid == 0:
+            return 'SYSTEM'
+        
         now = time.time()
         if pid in self._cache:
             name, timestamp = self._cache[pid]

@@ -9,14 +9,20 @@ from core.collector_base import CollectorBase
 
 
 class LinuxCollector(CollectorBase):
-    def __init__(self):
+    def __init__(self, use_approx: bool = False):
         super().__init__()
         self._last_io_counters: Dict[int, dict] = {}
         self._last_check_time = time.time()
         self._process_name_cache: Dict[int, str] = {}
         self._use_disk_io = True
-        self._use_approx = False
+        self._use_approx = use_approx
         self._use_proc_stat = False
+        self._file_mapper = None
+        self._cleanup_counter = 0
+        if not self._use_approx:
+            # Only use file mapper in non-approx mode
+            from core.file_mapper import FileMapper
+            self._file_mapper = FileMapper(cache_ttl_seconds=10.0)
 
     def _start_native(self) -> bool:
         self._check_io_availability()
@@ -55,6 +61,24 @@ class LinuxCollector(CollectorBase):
                         self._use_proc_stat = True
             except Exception:
                 self._use_proc_stat = False
+    
+    def _get_disk_for_process(self, pid: int, operation: str) -> str:
+        """Get the most likely disk for a process's I/O activity.
+        
+        Uses file mapping heuristics to determine which mount point
+        the process is most likely accessing.
+        """
+        if self._use_approx or self._file_mapper is None:
+            # In approx mode or if file mapper not available
+            return 'SYSTEM'
+        
+        # Try to get disk from file mapper
+        disk = self._file_mapper.get_most_likely_disk_for_process(pid, operation)
+        if disk:
+            return disk
+        
+        # Fall back to SYSTEM if unknown
+        return 'SYSTEM'
 
     def _collect_events(self) -> List[IOEvent]:
         events = []
@@ -66,6 +90,12 @@ class LinuxCollector(CollectorBase):
             events.extend(self._collect_process_io(current_time))
         else:
             events.extend(self._collect_disk_io(current_time))
+
+        # Clean up expired cache entries periodically
+        self._cleanup_counter += 1
+        if self._cleanup_counter >= 20 and self._file_mapper is not None:
+            self._file_mapper.cleanup_expired()
+            self._cleanup_counter = 0
 
         self._last_check_time = current_time
         return events
@@ -95,7 +125,7 @@ class LinuxCollector(CollectorBase):
                                 pid=pid,
                                 operation=OperationType.READ,
                                 bytes=read_bytes,
-                                disk='SYSTEM'
+                                disk=self._get_disk_for_process(pid, "READ")
                             ))
 
                         if write_bytes > 0:
@@ -104,7 +134,7 @@ class LinuxCollector(CollectorBase):
                                 pid=pid,
                                 operation=OperationType.WRITE,
                                 bytes=write_bytes,
-                                disk='SYSTEM'
+                                disk=self._get_disk_for_process(pid, "WRITE")
                             ))
 
                     self._last_io_counters[pid] = {
@@ -229,6 +259,4 @@ class LinuxCollector(CollectorBase):
 
 
 def create_linux_collector(use_approx: bool = False) -> LinuxCollector:
-    collector = LinuxCollector()
-    collector._use_approx = use_approx
-    return collector
+    return LinuxCollector(use_approx=use_approx)

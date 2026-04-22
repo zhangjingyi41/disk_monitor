@@ -85,7 +85,9 @@ def main():
             print("      一个物理磁盘可能包含多个逻辑分区(如C:, D:, E:)")
             print("      要查看进程级别的活动，请不使用 --approx-mode 参数")
         else:
-            print("提示: 当前显示进程级别的磁盘活动(磁盘显示为SYSTEM)")
+            print("提示: 当前显示进程级别的磁盘活动")
+            print("      程序会尝试将活动映射到具体分区(如C:, D:, E:)")
+            print("      对于无法确定分区的活动，将显示为SYSTEM")
             print("      要查看物理磁盘的活动，请使用 --approx-mode 参数")
         print()
 
